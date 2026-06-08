@@ -23,6 +23,7 @@ from backend.middleware.security import (
 from backend.routers import analytics, predictions, agents
 from backend.services.database import db_service
 from backend.services.cache import cache_service
+from backend.db_init import ensure_database_ready
 
 # Configure logging
 logging.basicConfig(
@@ -90,6 +91,7 @@ async def startup_event():
     logger.info(f"Environment: {settings.ENVIRONMENT}")
     logger.info(f"Debug mode: {settings.DEBUG}")
     logger.info(f"Cache available: {cache_service.is_available()}")
+    ensure_database_ready()
 
 
 @app.on_event("shutdown")

@@ -29,21 +29,63 @@ def _get_simple_connection():
 
 
 def load_dataframe_to_db(df: pd.DataFrame, table_name: str, chunk_size: int = 10_000):
-    """Bulk load a DataFrame into a PostgreSQL table using batched inserts.
-
-    Args:
-        df: Data to persist.
-        table_name: Target table name.
-        chunk_size: Number of rows per execute_values batch.
-    
-    Returns:
-        Number of rows inserted.
-    """
+    """Bulk load a DataFrame into a database table using batched inserts."""
     if df.empty:
         logger.warning("DataFrame is empty. Skipping load for table %s", table_name)
         return 0
 
-    conn = _get_simple_connection()
+    use_sqlite = False
+    conn = None
+    try:
+        conn = _get_simple_connection()
+    except Exception as exc:
+        logger.warning("PostgreSQL connection failed for bulk load: %s. Trying SQLite.", exc)
+        use_sqlite = True
+
+    if use_sqlite:
+        import sqlite3
+        from pathlib import Path
+        db_path = Path(__file__).resolve().parent.parent / "data" / "esg_db.sqlite"
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        cols = ','.join([f'"{c}"' for c in df.columns])
+        placeholders = ','.join(['?' for _ in df.columns])
+        total_inserted = 0
+        try:
+            def _py(v):
+                if v is None:
+                    return None
+                if isinstance(v, float) and (pd.isna(v)):
+                    return None
+                if pd.isna(v):
+                    return None
+                if isinstance(v, (np.generic,)):
+                    try:
+                        return v.item()
+                    except Exception:
+                        return None
+                return v
+
+            for start in range(0, len(df), chunk_size):
+                subset = df.iloc[start:start + chunk_size]
+                subset_clean = subset.where(~subset.isna(), None)
+                tuples = [tuple(_py(val) for val in row) for row in subset_clean.itertuples(index=False, name=None)]
+                if not tuples:
+                    continue
+                query = f"INSERT INTO {table_name} ({cols}) VALUES ({placeholders})"
+                cursor.executemany(query, tuples)
+                total_inserted += len(subset_clean)
+            conn.commit()
+            logger.info("Inserted %s rows into %s (SQLite)", total_inserted, table_name)
+        except Exception as exc:
+            conn.rollback()
+            logger.exception("Failed inserting into %s (SQLite): %s", table_name, exc)
+            raise
+        finally:
+            cursor.close()
+            conn.close()
+        return total_inserted
+
     cursor = conn.cursor()
     cols = ','.join([f'"{c}"' for c in df.columns])
     total_inserted = 0
@@ -85,16 +127,22 @@ def load_dataframe_to_db(df: pd.DataFrame, table_name: str, chunk_size: int = 10
 
 
 def fetch_query(query: str, params=None) -> pd.DataFrame:
-    """Execute a SQL query and return a pandas DataFrame.
-    
-    Args:
-        query: SQL query string.
-        params: Optional query parameters.
-        
-    Returns:
-        DataFrame with query results.
-    """
-    conn = _get_simple_connection()
+    """Execute a SQL query and return a pandas DataFrame."""
+    use_sqlite = False
+    conn = None
+    try:
+        conn = _get_simple_connection()
+    except Exception:
+        use_sqlite = True
+
+    if use_sqlite:
+        import sqlite3
+        from pathlib import Path
+        db_path = Path(__file__).resolve().parent.parent / "data" / "esg_db.sqlite"
+        conn = sqlite3.connect(str(db_path))
+        query = query.replace("%s", "?")
+        query = query.replace("ILIKE", "LIKE")
+
     try:
         df = pd.read_sql(query, conn, params=params)  # type: ignore[arg-type]
     finally:
@@ -103,11 +151,7 @@ def fetch_query(query: str, params=None) -> pd.DataFrame:
 
 
 def get_db_health():
-    """Check database connectivity for health endpoint.
-    
-    Returns:
-        Tuple of (is_healthy: bool, message: str)
-    """
+    """Check database connectivity for health endpoint."""
     try:
         conn = _get_simple_connection()
         cur = conn.cursor()
@@ -116,7 +160,19 @@ def get_db_health():
         cur.close()
         conn.close()
         return True, "ok"
-    except psycopg2.OperationalError as exc:
-        return False, f"unreachable: {exc}"  # pragma: no cover
-    except Exception as exc:  # pragma: no cover
-        return False, f"error: {exc}"
+    except Exception as exc:
+        try:
+            import sqlite3
+            from pathlib import Path
+            db_path = Path(__file__).resolve().parent.parent / "data" / "esg_db.sqlite"
+            if db_path.exists():
+                conn = sqlite3.connect(str(db_path))
+                cur = conn.cursor()
+                cur.execute("SELECT 1")
+                cur.fetchone()
+                cur.close()
+                conn.close()
+                return True, "ok (sqlite fallback)"
+        except Exception:
+            pass
+        return False, f"unreachable: {exc}"

@@ -5,16 +5,28 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import PageLayout from '@/components/PageLayout';
 import BlurText from '@/components/BlurText';
 import { api, type Company } from '@/services/api';
+import { sampleCompanies } from '@/data/sampleCompanies';
 import { Spinner } from '@/components/ui/spinner';
 
 const Companies = () => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [sectorFilter, setSectorFilter] = useState('all');
+  const [riskFilter, setRiskFilter] = useState('all');
+  const [showFilters, setShowFilters] = useState(false);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [usingSampleData, setUsingSampleData] = useState(false);
 
   useEffect(() => {
     const fetchCompanies = async () => {
@@ -23,6 +35,7 @@ const Companies = () => {
         setError(null);
         const data = await api.getTopCompanies(100);
         setCompanies(data);
+        setUsingSampleData(false);
       } catch (err: any) {
         if (err.message && err.message.includes('canceled')) return;
 
@@ -32,7 +45,9 @@ const Companies = () => {
           console.error("Response Status:", err.response.status);
           console.error("Response Headers:", err.response.headers);
         }
-        setError(err.message || 'Failed to load companies');
+        setCompanies(sampleCompanies);
+        setUsingSampleData(true);
+        setError(null);
       } finally {
         setLoading(false);
       }
@@ -41,10 +56,24 @@ const Companies = () => {
     fetchCompanies();
   }, []);
 
-  const filteredCompanies = companies.filter((company) =>
-    company.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    company.symbol.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const getRiskLevel = (score: number) => {
+    if (score <= 20) return 'Low';
+    if (score <= 40) return 'Medium';
+    return 'High';
+  };
+
+  const sectors = Array.from(new Set(companies.map((company) => company.sector).filter(Boolean))).sort();
+
+  const filteredCompanies = companies.filter((company) => {
+    const score = company.total_esg_risk_score || 0;
+    const matchesSearch =
+      company.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      company.symbol.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSector = sectorFilter === 'all' || company.sector === sectorFilter;
+    const matchesRisk = riskFilter === 'all' || getRiskLevel(score) === riskFilter;
+
+    return matchesSearch && matchesSector && matchesRisk;
+  });
 
   const getScoreColor = (score: number) => {
     // Lower ESG risk score is better (0 = best, 100 = worst)
@@ -103,14 +132,64 @@ const Companies = () => {
                     className="pl-10 bg-background/40 border-white/10"
                   />
                 </div>
-                <Button variant="outline" className="gap-2">
+                <Button
+                  variant={showFilters ? 'default' : 'outline'}
+                  className="gap-2"
+                  onClick={() => setShowFilters((isOpen) => !isOpen)}
+                >
                   <Filter className="h-4 w-4" />
                   Filters
                 </Button>
               </div>
+              {showFilters && (
+                <div className="mt-4 grid gap-4 border-t border-white/10 pt-4 md:grid-cols-[1fr_1fr_auto]">
+                  <Select value={sectorFilter} onValueChange={setSectorFilter}>
+                    <SelectTrigger className="bg-background/40 border-white/10">
+                      <SelectValue placeholder="All sectors" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All sectors</SelectItem>
+                      {sectors.map((sector) => (
+                        <SelectItem key={sector} value={sector}>
+                          {sector}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={riskFilter} onValueChange={setRiskFilter}>
+                    <SelectTrigger className="bg-background/40 border-white/10">
+                      <SelectValue placeholder="All risk levels" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All risk levels</SelectItem>
+                      <SelectItem value="Low">Low risk</SelectItem>
+                      <SelectItem value="Medium">Medium risk</SelectItem>
+                      <SelectItem value="High">High risk</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setSearchTerm('');
+                      setSectorFilter('all');
+                      setRiskFilter('all');
+                    }}
+                  >
+                    Reset
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
         </motion.div>
+
+        {usingSampleData && (
+          <Card className="mb-6 backdrop-blur-xl bg-[#9EFFCD]/10 border-[#9EFFCD]/20 p-4">
+            <p className="text-sm text-muted-foreground">
+              Showing sample ESG data because the local API is not running.
+            </p>
+          </Card>
+        )}
 
         {/* Loading State */}
         {loading && (
@@ -133,7 +212,7 @@ const Companies = () => {
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredCompanies.map((company, index) => {
               const score = company.total_esg_risk_score || 0;
-              const riskLevel = score <= 20 ? 'Low' : score <= 40 ? 'Medium' : 'High';
+              const riskLevel = getRiskLevel(score);
               return (
                 <motion.div
                   key={company.symbol}

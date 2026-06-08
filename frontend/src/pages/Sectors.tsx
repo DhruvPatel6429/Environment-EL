@@ -8,23 +8,36 @@ import { api, type SectorAverage } from '@/services/api';
 import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 
+const fallbackSectors: SectorAverage[] = [
+  { sector: 'Technology', avg_esg_score: 12.8, company_count: 6 },
+  { sector: 'Healthcare', avg_esg_score: 18.6, company_count: 5 },
+  { sector: 'Industrials', avg_esg_score: 20.1, company_count: 4 },
+  { sector: 'Energy', avg_esg_score: 24.7, company_count: 3 },
+  { sector: 'Consumer Cyclical', avg_esg_score: 26.3, company_count: 5 },
+  { sector: 'Utilities', avg_esg_score: 28.9, company_count: 2 },
+];
+
 const Sectors = () => {
   const [sectors, setSectors] = useState<SectorAverage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [usingSampleData, setUsingSampleData] = useState(false);
 
   useEffect(() => {
     const fetchSectors = async () => {
       try {
         setLoading(true);
         setError(null);
+        setUsingSampleData(false);
         const data = await api.getSectorAverages();
         setSectors(data);
       } catch (err: any) {
         // Ignore cancellation errors from React Strict Mode
         if (err.message && err.message.includes('canceled')) return;
 
-        setError(err.message || 'Failed to load sector data');
+        setUsingSampleData(true);
+        setSectors(fallbackSectors);
+        setError(null);
       } finally {
         setLoading(false);
       }
@@ -146,6 +159,14 @@ const Sectors = () => {
               );
             })}
           </div>
+        )}
+
+        {usingSampleData && !loading && (
+          <Card className="mb-6 backdrop-blur-xl bg-[#9EFFCD]/10 border-[#9EFFCD]/20 p-4 text-center">
+            <p className="text-sm text-muted-foreground">
+              Sample sector analytics are shown while the API is unavailable.
+            </p>
+          </Card>
         )}
 
         {/* No Results */}

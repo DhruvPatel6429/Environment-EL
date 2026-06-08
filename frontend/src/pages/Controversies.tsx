@@ -9,23 +9,33 @@ import BlurText from '@/components/BlurText';
 import { api, type ControversyCompany } from '@/services/api';
 import { Spinner } from '@/components/ui/spinner';
 
+const fallbackControversies: ControversyCompany[] = [
+  { symbol: 'ACME', name: 'Acme Industries', controversy_score: 87.4, controversy_level: 'severe' },
+  { symbol: 'GLOB', name: 'Global Energy', controversy_score: 75.1, controversy_level: 'high' },
+  { symbol: 'HEAL', name: 'HealthCore', controversy_score: 62.8, controversy_level: 'medium' },
+];
+
 const Controversies = () => {
   const [controversies, setControversies] = useState<ControversyCompany[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [usingSampleData, setUsingSampleData] = useState(false);
 
   useEffect(() => {
     const fetchControversies = async () => {
       try {
         setLoading(true);
         setError(null);
+        setUsingSampleData(false);
         const data = await api.getControversies(50); // Min score 50
         setControversies(data);
       } catch (err: any) {
         // Ignore cancellation errors from React Strict Mode
         if (err.message && err.message.includes('canceled')) return;
 
-        setError(err.message || 'Failed to load controversies');
+        setUsingSampleData(true);
+        setControversies(fallbackControversies);
+        setError(null);
       } finally {
         setLoading(false);
       }
@@ -153,6 +163,14 @@ const Controversies = () => {
               );
             })}
           </div>
+        )}
+
+        {usingSampleData && !loading && (
+          <Card className="mb-6 backdrop-blur-xl bg-[#FF6B6B]/10 border-[#FF6B6B]/20 p-4 text-center">
+            <p className="text-sm text-muted-foreground">
+              Sample controversy data is displayed while the API is unavailable.
+            </p>
+          </Card>
         )}
 
         {/* No Results */}

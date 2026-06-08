@@ -39,6 +39,7 @@ build/
 **/node_modules/
 frontend/node_modules/
 frontend/dist/
+**/.npm-cache/
 frontend/build/
 frontend/.vite/
 frontend/.cache/

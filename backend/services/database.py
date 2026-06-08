@@ -1,6 +1,8 @@
 import psycopg2
 from psycopg2 import sql, pool
 from psycopg2.extras import RealDictCursor
+import sqlite3
+import os
 from typing import List, Dict, Any, Optional
 from contextlib import contextmanager
 import logging
@@ -13,6 +15,8 @@ logger = logging.getLogger(__name__)
 class DatabaseService:
     _instance = None
     _connection_pool = None
+    use_sqlite = False
+    sqlite_db_path = None
     
     def __new__(cls):
         if cls._instance is None:
@@ -35,21 +39,123 @@ class DatabaseService:
             )
             logger.info("Database connection pool initialized successfully")
         except Exception as e:
-            logger.error(f"Failed to initialize database pool: {e}")
+            logger.warning(f"Failed to initialize database pool: {e}. Falling back to SQLite.")
+            self.use_sqlite = True
+            self._connection_pool = None
+            
+            # Setup SQLite database path
+            from pathlib import Path
+            db_dir = Path(__file__).resolve().parent.parent.parent / "data"
+            db_dir.mkdir(parents=True, exist_ok=True)
+            self.sqlite_db_path = str(db_dir / "esg_db.sqlite")
+            
+            # Make sure tables exist
+            self._initialize_sqlite_db()
+            
+    def _initialize_sqlite_db(self):
+        conn = sqlite3.connect(self.sqlite_db_path)
+        try:
+            cursor = conn.cursor()
+            
+            # Create esg_companies table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS esg_companies (
+                symbol TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                address TEXT,
+                sector TEXT,
+                industry TEXT,
+                full_time_employees INTEGER,
+                description TEXT,
+                total_esg_risk_score REAL,
+                environment_risk_score REAL,
+                social_risk_score REAL,
+                governance_risk_score REAL,
+                controversy_level TEXT,
+                controversy_score REAL,
+                esg_risk_percentile REAL,
+                esg_risk_level TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+            )
+            """)
+            
+            # Create model_predictions table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS model_predictions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_symbol TEXT NOT NULL,
+                predicted_risk_level TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                probabilities TEXT NOT NULL,
+                input_features TEXT NOT NULL,
+                model_version TEXT DEFAULT '1.0',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                FOREIGN KEY (company_symbol) REFERENCES esg_companies(symbol) ON DELETE CASCADE
+            )
+            """)
+            
+            # Create news_cache table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS news_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_symbol TEXT NOT NULL,
+                query_hash TEXT NOT NULL,
+                articles TEXT NOT NULL,
+                source TEXT DEFAULT 'newsapi',
+                cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                UNIQUE(company_symbol, query_hash)
+            )
+            """)
+            
+            # Create agent_analysis_cache table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS agent_analysis_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_symbol TEXT NOT NULL,
+                analysis_type TEXT NOT NULL,
+                result TEXT NOT NULL,
+                agents_involved TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                UNIQUE(company_symbol, analysis_type)
+            )
+            """)
+            
+            conn.commit()
+            logger.info("SQLite database schema initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize SQLite database: {e}")
             raise
+        finally:
+            conn.close()
     
     @contextmanager
     def get_connection(self):
-        conn = self._connection_pool.getconn()
-        try:
-            yield conn
-            conn.commit()
-        except Exception as e:
-            conn.rollback()
-            logger.error(f"Database error: {e}")
-            raise
-        finally:
-            self._connection_pool.putconn(conn)
+        if self.use_sqlite:
+            conn = sqlite3.connect(self.sqlite_db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                yield conn
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                logger.error(f"SQLite database error: {e}")
+                raise
+            finally:
+                conn.close()
+        else:
+            conn = self._connection_pool.getconn()
+            try:
+                yield conn
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                logger.error(f"Database error: {e}")
+                raise
+            finally:
+                self._connection_pool.putconn(conn)
     
     def execute_query(
         self,
@@ -57,21 +163,48 @@ class DatabaseService:
         params: Optional[tuple] = None,
         fetch_one: bool = False
     ) -> Optional[List[Dict[str, Any]]]:
-        with self.get_connection() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(query, params)
-                
-                if fetch_one:
-                    result = cursor.fetchone()
-                    return dict(result) if result else None
-                else:
-                    results = cursor.fetchall()
-                    return [dict(row) for row in results]
+        if self.use_sqlite:
+            # Convert %s placeholders to ?
+            query = query.replace("%s", "?")
+            # Replace ILIKE with LIKE
+            query = query.replace("ILIKE", "LIKE")
+            
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                try:
+                    if params is not None:
+                        cursor.execute(query, params)
+                    else:
+                        cursor.execute(query)
+                    
+                    if fetch_one:
+                        result = cursor.fetchone()
+                        return dict(result) if result else None
+                    else:
+                        results = cursor.fetchall()
+                        return [dict(row) for row in results]
+                finally:
+                    cursor.close()
+        else:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(query, params)
+                    
+                    if fetch_one:
+                        result = cursor.fetchone()
+                        return dict(result) if result else None
+                    else:
+                        results = cursor.fetchall()
+                        return [dict(row) for row in results]
     
     def get_health_status(self) -> Dict[str, Any]:
         try:
             result = self.execute_query("SELECT 1 as status", fetch_one=True)
-            return {"status": "healthy", "database": "connected"}
+            return {
+                "status": "healthy",
+                "database": "connected",
+                "type": "sqlite" if self.use_sqlite else "postgres"
+            }
         except Exception as e:
             logger.error(f"Health check failed: {e}")
             return {"status": "unhealthy", "database": "disconnected", "error": str(e)}

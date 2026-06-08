@@ -17,41 +17,70 @@ logger = logging.getLogger(__name__)
 
 def _get_simple_connection():
     """Get a simple database connection for initialization operations."""
-    return psycopg2.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        port=int(os.getenv("DB_PORT", 5432)),
-        database=os.getenv("DB_NAME", "esg_db"),
-        user=os.getenv("DB_USER", "postgres"),
-        password=os.getenv("DB_PASSWORD", ""),
-    )
+    try:
+        return psycopg2.connect(
+            host=os.getenv("DB_HOST", "localhost"),
+            port=int(os.getenv("DB_PORT", 5432)),
+            database=os.getenv("DB_NAME", "esg_db"),
+            user=os.getenv("DB_USER", "postgres"),
+            password=os.getenv("DB_PASSWORD", ""),
+        )
+    except Exception as exc:
+        logger.warning("PostgreSQL connection failed, falling back to SQLite in db_init: %s", exc)
+        import sqlite3
+        from pathlib import Path
+        db_path = Path(__file__).resolve().parent.parent / "data" / "esg_db.sqlite"
+        conn = sqlite3.connect(str(db_path))
+        conn.isolation_level = None
+        return conn
 
 
 def _table_exists(conn, table_name: str) -> bool:
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT EXISTS (
-                SELECT 1 FROM information_schema.tables
-                WHERE table_name = %s
-            );
-            """,
-            (table_name,),
-        )
-        return bool(cur.fetchone()[0])
+    is_sqlite = not hasattr(conn, "get_dsn_parameters")
+    cur = conn.cursor()
+    try:
+        if is_sqlite:
+            cur.execute(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?",
+                (table_name,)
+            )
+            row = cur.fetchone()
+            return bool(row and row[0] > 0)
+        else:
+            cur.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_name = %s
+                );
+                """,
+                (table_name,),
+            )
+            row = cur.fetchone()
+            return bool(row and row[0])
+    finally:
+        cur.close()
 
 
 def run_schema_if_needed():
-    """Create core tables if they are missing by executing `01_create_tables.sql`.
+    """Create core tables if they are missing by executing `01_create_tables.sql` or SQLite equivalent.
 
     Safe to call multiple times; the SQL uses IF NOT EXISTS.
     """
+    conn = _get_simple_connection()
+    is_sqlite = not hasattr(conn, "get_dsn_parameters")
+    
+    if is_sqlite:
+        logger.info("Using SQLite database. Schema already initialized by DatabaseService.")
+        conn.close()
+        return
+
     base_dir = Path(__file__).resolve().parent
     schema_path = base_dir / "sql" / "01_create_tables.sql"
     if not schema_path.exists():  # pragma: no cover - defensive
         logger.warning("Schema file not found at %s", schema_path)
         return
 
-    conn = _get_simple_connection()
     # Enable autocommit BEFORE any statements are executed so we can run the full schema script safely
     conn.autocommit = True
     try:
@@ -88,12 +117,16 @@ def _bootstrap_data_if_empty():
         return
 
     conn = _get_simple_connection()
-    conn.autocommit = True
+    if hasattr(conn, "autocommit"):
+        conn.autocommit = True
     try:
-        with conn.cursor() as cur:
+        cur = conn.cursor()
+        try:
             cur.execute("SELECT COUNT(*) FROM esg_companies")
             row = cur.fetchone()
             count = row[0] if row else 0
+        finally:
+            cur.close()
         if count > 0:
             logger.info("esg_companies already has %s rows; skipping bootstrap load.", count)
             return
@@ -106,8 +139,22 @@ def _bootstrap_data_if_empty():
     base_dir = Path(__file__).resolve().parent.parent  # project root
     csv_path = base_dir / "data" / "processed" / "esg_data_cleaned.csv"
     if not csv_path.exists():
-        logger.warning("CSV bootstrap file not found at %s", csv_path)
-        return
+        logger.info("CSV bootstrap file not found at %s. Attempting to generate from raw dataset...", csv_path)
+        raw_csv_path = base_dir / "data" / "raw" / "dataset.csv"
+        if raw_csv_path.exists():
+            try:
+                import sys
+                if str(base_dir) not in sys.path:
+                    sys.path.append(str(base_dir))
+                from scripts.data_preprocessor import load_and_preprocess_data
+                load_and_preprocess_data(input_path=raw_csv_path, output_path=csv_path)
+                logger.info("Processed dataset generated successfully at %s", csv_path)
+            except Exception as e:
+                logger.exception("Failed to run data preprocessor: %s", e)
+                return
+        else:
+            logger.warning("Raw CSV file not found at %s. Cannot preprocess.", raw_csv_path)
+            return
 
     try:
         logger.info("Bootstrapping esg_companies from %s...", csv_path)
@@ -164,6 +211,10 @@ def _bootstrap_data_if_empty():
         for col in numeric_cols:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        # Scale controversy score from 1-5 to 0-100 to match frontend UI threshold logic (>=60 is high, >=80 is severe)
+        if 'controversy_score' in df.columns:
+            df['controversy_score'] = df['controversy_score'] * 20
 
         # Reorder and select known columns only
         table_columns = [
