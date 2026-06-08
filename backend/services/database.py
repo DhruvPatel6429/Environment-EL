@@ -211,11 +211,26 @@ class DatabaseService:
     
     def get_top_companies(self, limit: int = 10) -> List[Dict[str, Any]]:
         query = """
-            SELECT 
+            SELECT
                 symbol,
                 name,
                 sector,
                 total_esg_risk_score
+            FROM esg_companies
+            WHERE total_esg_risk_score IS NOT NULL
+            ORDER BY total_esg_risk_score ASC
+            LIMIT %s
+        """
+        return self.execute_query(query, (limit,))
+
+    def get_all_companies(self, limit: int = 500) -> List[Dict[str, Any]]:
+        query = """
+            SELECT
+                symbol,
+                name,
+                sector,
+                total_esg_risk_score,
+                esg_risk_level
             FROM esg_companies
             WHERE total_esg_risk_score IS NOT NULL
             ORDER BY total_esg_risk_score ASC

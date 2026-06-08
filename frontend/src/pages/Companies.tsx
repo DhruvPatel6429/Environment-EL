@@ -33,7 +33,7 @@ const Companies = () => {
       try {
         setLoading(true);
         setError(null);
-        const data = await api.getTopCompanies(100);
+        const data = await api.getAllCompanies(500);
         setCompanies(data);
         setUsingSampleData(false);
       } catch (err: any) {
@@ -58,7 +58,7 @@ const Companies = () => {
 
   const getRiskLevel = (score: number) => {
     if (score <= 20) return 'Low';
-    if (score <= 40) return 'Medium';
+    if (score <= 30) return 'Medium';
     return 'High';
   };
 
@@ -78,7 +78,7 @@ const Companies = () => {
   const getScoreColor = (score: number) => {
     // Lower ESG risk score is better (0 = best, 100 = worst)
     if (score <= 20) return 'from-[#9EFFCD] to-[#6BFFEA]';
-    if (score <= 40) return 'from-[#FFD700] to-[#FFA500]';
+    if (score <= 30) return 'from-[#FFD700] to-[#FFA500]';
     return 'from-[#FF6B6B] to-[#FF4757]';
   };
 

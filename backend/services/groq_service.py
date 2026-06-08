@@ -4,6 +4,7 @@ Uses Groq's fast inference API for AI-powered analysis
 """
 import os
 import logging
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 import httpx
 from ..core.config import settings
@@ -126,7 +127,7 @@ Be specific and factual. Focus on ESG implications."""
                         "company": company_name,
                         "analysis": analysis_text,
                         "model": self.model,
-                        "timestamp": httpx.get("https://worldtimeapi.org/api/timezone/Etc/UTC").json()["datetime"]
+                        "timestamp": datetime.now(timezone.utc).isoformat()
                     }
                 else:
                     logger.error(f"Groq API error: {response.status_code} - {response.text}")

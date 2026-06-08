@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 import torch
 import torch.nn as nn
+import torch.serialization
 import joblib
 import numpy as np
 from pathlib import Path
@@ -108,12 +109,15 @@ class NewsAnalysisAgent(BaseAgent):
         }
 
 class ModelInterpretabilityAgent(BaseAgent):
-    def __init__(self, model_path: str = "../models/esg_risk_model.pt"):
+    def __init__(self, model_path: Optional[str] = None):
         super().__init__(
             name="Model Explainer",
             role="explaining ESG risk model predictions with feature importance"
         )
-        self.model_path = Path(model_path)
+        if model_path is None:
+            self.model_path = Path(__file__).resolve().parent.parent.parent / "models" / "esg_risk_model.pt"
+        else:
+            self.model_path = Path(model_path)
         self.model = None
         self.metadata = None
         self._load_model()
@@ -121,7 +125,8 @@ class ModelInterpretabilityAgent(BaseAgent):
     def _load_model(self):
         try:
             if self.model_path.exists():
-                checkpoint = torch.load(self.model_path, map_location='cpu', weights_only=False)
+                with torch.serialization.safe_globals([np.core.multiarray.scalar]):
+                    checkpoint = torch.load(self.model_path, map_location='cpu', weights_only=True)
                 self.metadata = checkpoint
                 
                 arch = checkpoint.get('model_architecture', {})

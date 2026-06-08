@@ -80,7 +80,7 @@ async def analyze_company(request: CompanyAnalysisRequest):
         raise
     except Exception as e:
         logger.error(f"Error in analyze_company: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/company-news/{symbol}")
 async def get_company_news(symbol: str, days: int = 30):
@@ -106,7 +106,7 @@ async def get_company_news(symbol: str, days: int = 30):
         raise
     except Exception as e:
         logger.error(f"Error fetching news: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/sector-insights/{sector}")
 async def get_sector_insights(sector: str, days: int = 7):
@@ -122,7 +122,7 @@ async def get_sector_insights(sector: str, days: int = 7):
         
     except Exception as e:
         logger.error(f"Error fetching sector insights: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/chat")
 async def chat_with_agents(request: ChatRequest):

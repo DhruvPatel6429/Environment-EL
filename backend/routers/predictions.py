@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field, validator
 from typing import List, Optional, Dict, Any
 import torch
 import torch.nn as nn
+import torch.serialization
 import numpy as np
 import joblib
 from pathlib import Path
@@ -82,14 +83,16 @@ class ModelService:
     
     def _load_model(self):
         try:
-            model_path = Path('models/esg_risk_model.pt')
-            scaler_path = Path('models/scaler.pkl')
-            metadata_path = Path('models/model_metadata.json')
+            _models_dir = Path(__file__).resolve().parent.parent.parent / "models"
+            model_path = _models_dir / "esg_risk_model.pt"
+            scaler_path = _models_dir / "scaler.pkl"
+            metadata_path = _models_dir / "model_metadata.json"
             
             self._device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             
             if model_path.exists():
-                checkpoint = torch.load(model_path, map_location=self._device, weights_only=False)
+                with torch.serialization.safe_globals([np.core.multiarray.scalar]):
+                    checkpoint = torch.load(model_path, map_location=self._device, weights_only=True)
                 
                 arch = checkpoint.get('model_architecture', {})
                 self._model = ESGRiskClassifier(

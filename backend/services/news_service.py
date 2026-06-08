@@ -1,7 +1,7 @@
 import os
 import asyncio
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 import httpx
 from functools import lru_cache
 import logging
@@ -129,7 +129,7 @@ class NewsService:
             logger.error(f"Error fetching sector news: {str(e)}")
             return []
     
-    def extract_esg_signals(self, articles: List[Dict]) -> Dict[str, any]:
+    def extract_esg_signals(self, articles: List[Dict]) -> Dict[str, Any]:
         if not articles:
             return {"sentiment": "neutral", "topic_count": 0, "recent_events": []}
         

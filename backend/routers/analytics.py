@@ -46,6 +46,18 @@ class CompanyDetailResponse(BaseModel):
     esg_risk_level: Optional[str]
 
 
+@router.get("/companies", response_model=List[CompanyResponse])
+async def get_all_companies(
+    limit: int = Query(500, ge=1, le=500, description="Max number of companies to return")
+):
+    try:
+        companies = db_service.get_all_companies(limit)
+        return companies
+    except Exception as e:
+        logger.error(f"Error fetching all companies: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch companies")
+
+
 @router.get("/companies/top", response_model=List[CompanyResponse])
 @cache_response(ttl=600, key_prefix="top_companies")
 async def get_top_companies(

@@ -120,6 +120,14 @@ class ApiService {
     return data;
   }
 
+  async getAllCompanies(limit = 400): Promise<Company[]> {
+    const { data } = await this.client.get<Company[]>('/api/analytics/companies', {
+      params: { limit },
+      signal: this.getAbortSignal('allCompanies'),
+    });
+    return data;
+  }
+
   async getSectorAverages(): Promise<SectorAverage[]> {
     const { data } = await this.client.get<SectorAverage[]>('/api/analytics/sectors/average', {
       signal: this.getAbortSignal('sectorAverages'),
